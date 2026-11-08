@@ -243,11 +243,12 @@
             }
             var text = tokenText();
             sendBridge({ actionType: 'app.pasteboard.set', text: text });
-            sendBridge({
-                actionType: 'app.browser.open',
-                url: 'https://teams.microsoft.com/l/chat/0/0',
-                params: { users: TEAMS_TO, message: text }
-            });
+            // Build the full Teams URL ourselves. Passing message via `params` lets
+            // native append it unencoded, so the '&' before nct splits it off.
+            var teamsUrl = 'https://teams.microsoft.com/l/chat/0/0' +
+                '?users=' + encodeURIComponent(TEAMS_TO) +
+                '&message=' + encodeURIComponent(text);
+            sendBridge({ actionType: 'app.browser.open', url: teamsUrl });
             log('Opening Teams chat with ' + TEAMS_TO + ' (also copied to clipboard)');
         }
 
