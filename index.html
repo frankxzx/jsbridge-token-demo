@@ -59,8 +59,8 @@
         var APP_ID = '99999999';
         var TEAMS_TO = 'frank-zx.xu@aia.com';
         // Local dev page that receives the tokens (opened on the developer's PC)
-        var LOCAL_URL = 'http://localhost:6002/agent/Debug/Smart Plus';
-        var PARAM_FR = 'frToken';   // query param name for FR token
+        var LOCAL_URL = 'http://localhost:6002/agent/debug/smartPlus';
+        var PARAM_FR = 'fr_token';  // query param name for FR token
         var PARAM_NCT = 'nct';      // query param name for CRM NCT
         var DEFAULT_TTL_MS = 15 * 60 * 1000;   // tokens live 15 min
         var REFRESH_BEFORE_MS = 2 * 60 * 1000; // renew 2 min before expiry
@@ -222,7 +222,7 @@
         }
 
         function localLink() {
-            var u = new URL(LOCAL_URL);            // encodes the space as %20
+            var u = new URL(LOCAL_URL);            // URL-encodes the token values
             u.searchParams.set(PARAM_FR, TOKENS.fr.value);
             u.searchParams.set(PARAM_NCT, TOKENS.crm.value);
             return u.toString();
