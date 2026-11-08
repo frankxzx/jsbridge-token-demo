@@ -6,123 +6,272 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
     <title>JSBridge Token Demo</title>
     <style>
-        :root { color-scheme: light dark; }
+        :root { color-scheme: light dark; --red: #c8102e; --ok: #1a7f37; --warn: #b26a00; --bad: #c8102e; }
         body { font: 15px/1.5 -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; }
-        h1 { font-size: 18px; margin: 0 0 12px; }
+        h1 { font-size: 18px; margin: 0 0 4px; }
+        .sub { font-size: 12px; opacity: .7; margin-bottom: 12px; }
         .card { border: 1px solid #ccc; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
-        .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-        button { flex: 0 0 auto; padding: 10px 14px; border: 0; border-radius: 8px;
-                 background: #c8102e; color: #fff; font-size: 15px; }
-        button:active { opacity: .7; }
-        label { font-weight: 600; font-size: 13px; }
-        textarea { width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical;
-                   font: 12px/1.4 ui-monospace, monospace; border: 1px solid #ccc; border-radius: 8px; padding: 8px; }
-        .meta { font-size: 12px; opacity: .7; margin-top: 4px; word-break: break-all; }
+        .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .name { font-weight: 600; }
+        .badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; color: #fff; background: #888; }
+        .badge.ok { background: var(--ok); } .badge.warn { background: var(--warn); } .badge.bad { background: var(--bad); }
+        .token { font: 11px/1.4 ui-monospace, monospace; word-break: break-all; max-height: 4.2em; overflow: hidden;
+                 opacity: .85; margin: 4px 0; }
+        .meta { font-size: 12px; opacity: .75; }
+        .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        button { padding: 10px 14px; border: 0; border-radius: 8px; background: var(--red); color: #fff; font-size: 15px; }
+        button.secondary { background: #666; }
+        button.big { width: 100%; padding: 14px; font-size: 17px; font-weight: 600; }
+        button:active { opacity: .7; } button:disabled { opacity: .4; }
+        #log { font: 11px/1.4 ui-monospace, monospace; white-space: pre-wrap; max-height: 140px; overflow: auto; opacity: .7; }
     </style>
 </head>
 
 <body>
     <h1>JSBridge Token Demo</h1>
+    <div class="sub" id="screen">Screen: -</div>
+
+    <button type="button" class="big" id="btnShare">Share FR + CRM tokens</button>
+
+    <div class="card" id="card-fr">
+        <div class="head"><span class="name">FR Token</span><span class="badge" data-badge>none</span></div>
+        <div class="token" data-token>-</div>
+        <div class="meta" data-meta>-</div>
+        <div class="row"><button type="button" class="secondary" data-refresh>Refresh</button></div>
+    </div>
+
+    <div class="card" id="card-crm">
+        <div class="head"><span class="name">CRM NCT</span><span class="badge" data-badge>none</span></div>
+        <div class="token" data-token>-</div>
+        <div class="meta" data-meta>-</div>
+        <div class="row"><button type="button" class="secondary" data-refresh>Refresh</button></div>
+    </div>
 
     <div class="card">
-        <div class="row">
-            <button type="button" id="btnFr">Get FR Token</button>
-            <button type="button" id="btnCrm">Get CRM NCT</button>
-            <button type="button" id="btnCopy">Copy</button>
-            <button type="button" id="btnClear">Clear</button>
-        </div>
-        <label for="out">Result</label>
-        <textarea id="out" readonly placeholder="Token result appears here"></textarea>
-        <div class="meta" id="meta"></div>
+        <div class="name">Log</div>
+        <div id="log"></div>
     </div>
 
     <script>
         'use strict';
 
         var APP_ID = '99999999';
-        var out = document.getElementById('out');
-        var meta = document.getElementById('meta');
+        var DEFAULT_TTL_MS = 15 * 60 * 1000;   // tokens live 15 min
+        var REFRESH_BEFORE_MS = 2 * 60 * 1000; // renew 2 min before expiry
+        var RETRY_MS = 15 * 1000;              // retry if no/invalid response
 
-        // ---- Bridge send -------------------------------------------------
+        // Two tokens we keep alive
+        var TOKENS = {
+            fr:  { label: 'FR Token', tokenType: 'forgeRock',      audience: 'host', el: 'card-fr' },
+            crm: { label: 'CRM NCT',  tokenType: 'newCommonToken', audience: 'crm',  el: 'card-crm' }
+        };
+        Object.keys(TOKENS).forEach(function (k) {
+            var t = TOKENS[k];
+            t.value = null; t.exp = 0; t.pending = false; t.timer = null; t.forceNext = false;
+        });
+
+        // ---- Bridge -------------------------------------------------------
         function sendBridge(params) {
             params.appId = APP_ID;
-            params.seq = String(Date.now());
+            params.seq = String(Date.now()) + Math.floor(Math.random() * 1000);
             var h = (window.webkit && window.webkit.messageHandlers) || {};
-            if (h.hostJsBridge) {
-                try { h.hostJsBridge.postMessage(params); }
-                catch (e) { setMeta('postMessage error: ' + e); }
-            } else {
-                setMeta('hostJsBridge not available (open inside the app)');
-            }
+            if (!h.hostJsBridge) { log('hostJsBridge not available (open inside the app)'); return false; }
+            try { h.hostJsBridge.postMessage(params); return true; }
+            catch (e) { log('postMessage error: ' + e); return false; }
         }
 
-        function getFrToken() {
-            setMeta('Requesting FR token...');
-            sendBridge({
-                actionType: 'app.authentication.getToken',
-                tokenType: 'forgeRock',
-                audience: 'host'
-            });
-        }
-
-        function getCrmNct() {
-            setMeta('Requesting CRM NCT...');
-            sendBridge({
-                actionType: 'app.authentication.getToken',
-                tokenType: 'newCommonToken',
-                audience: 'crm'
-            });
-        }
-
-        // ---- Bridge receive (native -> web) ------------------------------
-        // Native calls: hostJsBridgeReceiver(base64OfUtf8Json)
-        window.hostJsBridgeReceiver = function (jsonBase64String) {
-            try {
-                var json = decodeBase64Utf8(jsonBase64String);
-                var params = JSON.parse(json);
-                if (params.actionType === 'app.authentication.getToken') {
-                    render(params);
-                } else {
-                    setMeta('Ignored actionType: ' + params.actionType);
-                }
-            } catch (e) {
-                setMeta('Parse error: ' + e);
-            }
+        window.hostJsBridgeReceiver = function (b64) {
+            var p;
+            try { p = JSON.parse(decodeBase64Utf8(b64)); }
+            catch (e) { log('Parse error: ' + e); return; }
+            if (p.actionType === 'app.authentication.getToken') onToken(p);
+            else if (p.actionType === 'app.error.receive') log('Native error: ' + safeStr(p));
         };
 
         function decodeBase64Utf8(b64) {
-            var bin = atob(b64);
-            var bytes = new Uint8Array(bin.length);
+            var bin = atob(b64), bytes = new Uint8Array(bin.length);
             for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
             return new TextDecoder('utf-8').decode(bytes);
         }
 
-        // ---- UI helpers (textContent only, no innerHTML / no token logging)
-        function render(params) {
-            out.value = JSON.stringify(params, null, 2);
-            var t = params.tokenType ? params.tokenType : '(unknown)';
-            var a = params.audience ? params.audience : '(none)';
-            setMeta('tokenType=' + t + '  audience=' + a + '  received ' + new Date().toLocaleTimeString());
+        // ---- Token lifecycle ---------------------------------------------
+        function requestToken(key, force) {
+            var t = TOKENS[key];
+            var params = { actionType: 'app.authentication.getToken', tokenType: t.tokenType, audience: t.audience };
+            if (force || t.forceNext) params.forceRenew = 'yes';
+            t.pending = true;
+            render(key);
+            log('Request ' + t.label + (params.forceRenew ? ' (forceRenew)' : ''));
+            if (!sendBridge(params)) { t.pending = false; render(key); }
+            // If native never answers, retry
+            schedule(key, RETRY_MS);
         }
 
-        function setMeta(text) { meta.textContent = text; }
+        function keyFromResponse(p) {
+            if (p.tokenType === 'forgeRock' || p.audience === 'host') return 'fr';
+            if (p.tokenType === 'newCommonToken' && p.audience === 'crm') return 'crm';
+            if (p.audience === 'crm') return 'crm';
+            // Fallback: whichever is pending
+            if (TOKENS.crm.pending && !TOKENS.fr.pending) return 'crm';
+            if (TOKENS.fr.pending && !TOKENS.crm.pending) return 'fr';
+            return null;
+        }
 
-        document.getElementById('btnFr').addEventListener('click', getFrToken);
-        document.getElementById('btnCrm').addEventListener('click', getCrmNct);
-        document.getElementById('btnClear').addEventListener('click', function () {
-            out.value = ''; setMeta('');
-        });
-        document.getElementById('btnCopy').addEventListener('click', function () {
-            if (!out.value) { setMeta('Nothing to copy'); return; }
-            out.select();
-            if (navigator.clipboard) {
-                navigator.clipboard.writeText(out.value)
-                    .then(function () { setMeta('Copied'); })
-                    .catch(function () { setMeta('Copy failed'); });
-            } else {
-                document.execCommand('copy'); setMeta('Copied');
+        // Response shape is not documented; look in the usual places.
+        function extractToken(p) {
+            var cands = [p.token, p.accessToken, p.jwt, p.commonToken,
+                p.tokenSet && p.tokenSet.accessToken, p.data && p.data.token,
+                p.data && p.data.commonToken && p.data.commonToken.jwt,
+                p.result && p.result.token];
+            for (var i = 0; i < cands.length; i++) if (typeof cands[i] === 'string' && cands[i]) return cands[i];
+            // last resort: any string field that looks like a JWT
+            var found = null;
+            (function walk(o, depth) {
+                if (found || !o || typeof o !== 'object' || depth > 4) return;
+                Object.keys(o).forEach(function (k) {
+                    var v = o[k];
+                    if (!found && typeof v === 'string' && /^eyJ[\w-]+\.[\w-]+\.[\w-]*$/.test(v)) found = v;
+                    else if (typeof v === 'object') walk(v, depth + 1);
+                });
+            })(p, 0);
+            return found;
+        }
+
+        function jwtExp(token) {
+            try {
+                var part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+                while (part.length % 4) part += '=';
+                var payload = JSON.parse(decodeBase64Utf8(part));
+                return payload.exp ? payload.exp * 1000 : 0;
+            } catch (e) { return 0; }
+        }
+
+        function onToken(p) {
+            var key = keyFromResponse(p);
+            if (!key) { log('Token response not matched: ' + safeStr(p)); return; }
+            var t = TOKENS[key];
+            t.pending = false;
+            var tok = extractToken(p);
+            if (!tok) { log(t.label + ' empty/failed: ' + safeStr(p)); schedule(key, RETRY_MS); render(key); return; }
+
+            var exp = jwtExp(tok) || (Date.now() + DEFAULT_TTL_MS);
+            // Native may return a cached token that is about to expire -> force a new one next time
+            if (exp - Date.now() <= REFRESH_BEFORE_MS) {
+                log(t.label + ' returned near-expiry token, forcing renew');
+                t.forceNext = true;
+                t.value = tok; t.exp = exp; render(key);
+                schedule(key, 1000);
+                return;
             }
+            t.forceNext = false;
+            var changed = tok !== t.value;
+            t.value = tok; t.exp = exp;
+            log(t.label + (changed ? ' updated' : ' unchanged') + ', expires ' + fmtTime(exp));
+            schedule(key, exp - Date.now() - REFRESH_BEFORE_MS);
+            render(key);
+        }
+
+        function schedule(key, ms) {
+            var t = TOKENS[key];
+            clearTimeout(t.timer);
+            t.timer = setTimeout(function () { requestToken(key); }, Math.max(1000, ms));
+        }
+
+        function isValid(t) { return t.value && t.exp - Date.now() > 30 * 1000; }
+
+        // Timers are paused while the app is backgrounded; re-check on return
+        function checkAll() {
+            Object.keys(TOKENS).forEach(function (k) {
+                var t = TOKENS[k];
+                if (!t.value || t.exp - Date.now() <= REFRESH_BEFORE_MS) requestToken(k);
+            });
+        }
+
+        // ---- Keep screen on ----------------------------------------------
+        var wakeLock = null;
+        function keepScreenOn() {
+            sendBridge({ actionType: 'app.keepScreenOn.set', keepOn: 'yes' });
+            // Web fallback (supported in newer iOS WebViews)
+            if ('wakeLock' in navigator) {
+                navigator.wakeLock.request('screen').then(function (l) {
+                    wakeLock = l; setScreen('Screen: kept on (native + wake lock)');
+                    l.addEventListener('release', function () { wakeLock = null; });
+                }).catch(function () { setScreen('Screen: kept on (native)'); });
+            } else {
+                setScreen('Screen: kept on (native)');
+            }
+        }
+        function setScreen(s) { document.getElementById('screen').textContent = s; }
+
+        // ---- Share --------------------------------------------------------
+        function share() {
+            var missing = Object.keys(TOKENS).filter(function (k) { return !isValid(TOKENS[k]); });
+            if (missing.length) {
+                log('Not shareable yet, refreshing: ' + missing.map(function (k) { return TOKENS[k].label; }).join(', '));
+                missing.forEach(function (k) { requestToken(k, true); });
+                return;
+            }
+            var text = 'Smart+ tokens (' + new Date().toLocaleString() + ')\n\n' +
+                Object.keys(TOKENS).map(function (k) {
+                    var t = TOKENS[k];
+                    return '[' + t.label + '] expires ' + fmtTime(t.exp) + '\n' + t.value;
+                }).join('\n\n');
+            sendBridge({ actionType: 'app.sharebox.open', text: text });
+            log('Share sheet opened');
+        }
+
+        // ---- UI -----------------------------------------------------------
+        function render(key) {
+            var t = TOKENS[key], card = document.getElementById(t.el);
+            var badge = card.querySelector('[data-badge]');
+            var left = t.exp - Date.now();
+            var cls = '', txt;
+            if (t.pending && !isValid(t)) { txt = 'loading'; }
+            else if (!t.value) { txt = 'none'; }
+            else if (left <= 0) { txt = 'expired'; cls = 'bad'; }
+            else if (left <= REFRESH_BEFORE_MS) { txt = fmtLeft(left); cls = 'warn'; }
+            else { txt = fmtLeft(left); cls = 'ok'; }
+            badge.className = 'badge ' + cls;
+            badge.textContent = txt;
+            card.querySelector('[data-token]').textContent = t.value || '-';
+            card.querySelector('[data-meta]').textContent = t.value
+                ? 'Expires ' + fmtTime(t.exp) + (t.pending ? ' · refreshing…' : '')
+                : (t.pending ? 'Requesting…' : '-');
+            var shareOk = Object.keys(TOKENS).every(function (k) { return isValid(TOKENS[k]); });
+            document.getElementById('btnShare').textContent = shareOk ? 'Share FR + CRM tokens' : 'Share (getting tokens…)';
+        }
+
+        function fmtLeft(ms) {
+            var s = Math.max(0, Math.floor(ms / 1000));
+            return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2) + ' left';
+        }
+        function fmtTime(ts) { return new Date(ts).toLocaleTimeString(); }
+        function safeStr(p) {
+            // Never log raw tokens
+            return JSON.stringify(p, function (k, v) {
+                return typeof v === 'string' && v.length > 40 ? v.slice(0, 8) + '…(' + v.length + ')' : v;
+            });
+        }
+        function log(s) {
+            var el = document.getElementById('log');
+            el.textContent = new Date().toLocaleTimeString() + '  ' + s + '\n' + el.textContent.slice(0, 4000);
+        }
+
+        // ---- Wire up -------------------------------------------------------
+        document.getElementById('btnShare').addEventListener('click', share);
+        Object.keys(TOKENS).forEach(function (k) {
+            document.getElementById(TOKENS[k].el).querySelector('[data-refresh]')
+                .addEventListener('click', function () { requestToken(k, true); });
         });
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') { keepScreenOn(); checkAll(); }
+        });
+        setInterval(function () { Object.keys(TOKENS).forEach(render); }, 1000);
+
+        keepScreenOn();
+        requestToken('fr');
+        setTimeout(function () { requestToken('crm'); }, 300);
     </script>
 </body>
 
