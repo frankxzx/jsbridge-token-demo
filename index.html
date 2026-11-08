@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+    <title>JSBridge Token Demo</title>
+    <style>
+        :root { color-scheme: light dark; }
+        body { font: 15px/1.5 -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; }
+        h1 { font-size: 18px; margin: 0 0 12px; }
+        .card { border: 1px solid #ccc; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+        .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+        button { flex: 0 0 auto; padding: 10px 14px; border: 0; border-radius: 8px;
+                 background: #c8102e; color: #fff; font-size: 15px; }
+        button:active { opacity: .7; }
+        label { font-weight: 600; font-size: 13px; }
+        textarea { width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical;
+                   font: 12px/1.4 ui-monospace, monospace; border: 1px solid #ccc; border-radius: 8px; padding: 8px; }
+        .meta { font-size: 12px; opacity: .7; margin-top: 4px; word-break: break-all; }
+    </style>
+</head>
+
+<body>
+    <h1>JSBridge Token Demo</h1>
+
+    <div class="card">
+        <div class="row">
+            <button type="button" id="btnFr">Get FR Token</button>
+            <button type="button" id="btnCrm">Get CRM NCT</button>
+            <button type="button" id="btnCopy">Copy</button>
+            <button type="button" id="btnClear">Clear</button>
+        </div>
+        <label for="out">Result</label>
+        <textarea id="out" readonly placeholder="Token result appears here"></textarea>
+        <div class="meta" id="meta"></div>
+    </div>
+
+    <script>
+        'use strict';
+
+        var APP_ID = '99999999';
+        var out = document.getElementById('out');
+        var meta = document.getElementById('meta');
+
+        // ---- Bridge send -------------------------------------------------
+        function sendBridge(params) {
+            params.appId = APP_ID;
+            params.seq = String(Date.now());
+            var h = (window.webkit && window.webkit.messageHandlers) || {};
+            if (h.hostJsBridge) {
+                try { h.hostJsBridge.postMessage(params); }
+                catch (e) { setMeta('postMessage error: ' + e); }
+            } else {
+                setMeta('hostJsBridge not available (open inside the app)');
+            }
+        }
+
+        function getFrToken() {
+            setMeta('Requesting FR token...');
+            sendBridge({
+                actionType: 'app.authentication.getToken',
+                tokenType: 'forgeRock',
+                audience: 'host'
+            });
+        }
+
+        function getCrmNct() {
+            setMeta('Requesting CRM NCT...');
+            sendBridge({
+                actionType: 'app.authentication.getToken',
+                tokenType: 'newCommonToken',
+                audience: 'crm'
+            });
+        }
+
+        // ---- Bridge receive (native -> web) ------------------------------
+        // Native calls: hostJsBridgeReceiver(base64OfUtf8Json)
+        window.hostJsBridgeReceiver = function (jsonBase64String) {
+            try {
+                var json = decodeBase64Utf8(jsonBase64String);
+                var params = JSON.parse(json);
+                if (params.actionType === 'app.authentication.getToken') {
+                    render(params);
+                } else {
+                    setMeta('Ignored actionType: ' + params.actionType);
+                }
+            } catch (e) {
+                setMeta('Parse error: ' + e);
+            }
+        };
+
+        function decodeBase64Utf8(b64) {
+            var bin = atob(b64);
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            return new TextDecoder('utf-8').decode(bytes);
+        }
+
+        // ---- UI helpers (textContent only, no innerHTML / no token logging)
+        function render(params) {
+            out.value = JSON.stringify(params, null, 2);
+            var t = params.tokenType ? params.tokenType : '(unknown)';
+            var a = params.audience ? params.audience : '(none)';
+            setMeta('tokenType=' + t + '  audience=' + a + '  received ' + new Date().toLocaleTimeString());
+        }
+
+        function setMeta(text) { meta.textContent = text; }
+
+        document.getElementById('btnFr').addEventListener('click', getFrToken);
+        document.getElementById('btnCrm').addEventListener('click', getCrmNct);
+        document.getElementById('btnClear').addEventListener('click', function () {
+            out.value = ''; setMeta('');
+        });
+        document.getElementById('btnCopy').addEventListener('click', function () {
+            if (!out.value) { setMeta('Nothing to copy'); return; }
+            out.select();
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(out.value)
+                    .then(function () { setMeta('Copied'); })
+                    .catch(function () { setMeta('Copy failed'); });
+            } else {
+                document.execCommand('copy'); setMeta('Copied');
+            }
+        });
+    </script>
+</body>
+
+</html>
