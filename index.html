@@ -31,7 +31,7 @@
     <h1>JSBridge Token Demo</h1>
     <div class="sub" id="screen">Screen: -</div>
 
-    <button type="button" class="big" id="btnTeams">Send to Frank in Teams</button>
+    <button type="button" class="big" id="btnTeams">Copy link &amp; open Teams chat with Frank</button>
     <button type="button" class="big secondary" id="btnShare" style="margin-top:8px">Share FR + CRM tokens</button>
 
     <div class="card" id="card-fr">
@@ -242,14 +242,29 @@
                 return;
             }
             var text = tokenText();
+            // Full link goes to the clipboard (bridge JSON, no URL processing).
             sendBridge({ actionType: 'app.pasteboard.set', text: text });
-            // Build the full Teams URL ourselves. Passing message via `params` lets
-            // native append it unencoded, so the '&' before nct splits it off.
-            var teamsUrl = 'https://teams.microsoft.com/l/chat/0/0' +
-                '?users=' + encodeURIComponent(TEAMS_TO) +
-                '&message=' + encodeURIComponent(text);
-            sendBridge({ actionType: 'app.browser.open', url: teamsUrl });
-            log('Opening Teams chat with ' + TEAMS_TO + ' (also copied to clipboard)');
+            // Native app.browser.open decodes and re-encodes the URL, which turns
+            // %26 back into '&' and cuts the message before nct. So no prefill:
+            // just open the chat and paste.
+            sendBridge({
+                actionType: 'app.browser.open',
+                url: 'https://teams.microsoft.com/l/chat/0/0?users=' + encodeURIComponent(TEAMS_TO)
+            });
+            toast('Link copied. Paste it in the Teams chat.');
+            log('Copied link; opening Teams chat with ' + TEAMS_TO);
+        }
+
+        function toast(msg) {
+            var el = document.getElementById('toast');
+            if (!el) {
+                el = document.createElement('div'); el.id = 'toast';
+                el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);' +
+                    'background:#222;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:9;';
+                document.body.appendChild(el);
+            }
+            el.textContent = msg; el.style.display = 'block';
+            clearTimeout(el._t); el._t = setTimeout(function () { el.style.display = 'none'; }, 4000);
         }
 
         // ---- UI -----------------------------------------------------------
