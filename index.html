@@ -31,7 +31,8 @@
     <h1>JSBridge Token Demo</h1>
     <div class="sub" id="screen">Screen: -</div>
 
-    <button type="button" class="big" id="btnShare">Share FR + CRM tokens</button>
+    <button type="button" class="big" id="btnTeams">Send to Frank in Teams</button>
+    <button type="button" class="big secondary" id="btnShare" style="margin-top:8px">Share FR + CRM tokens</button>
 
     <div class="card" id="card-fr">
         <div class="head"><span class="name">FR Token</span><span class="badge" data-badge>none</span></div>
@@ -56,6 +57,7 @@
         'use strict';
 
         var APP_ID = '99999999';
+        var TEAMS_TO = 'frank-zx.xu@aia.com';
         var DEFAULT_TTL_MS = 15 * 60 * 1000;   // tokens live 15 min
         var REFRESH_BEFORE_MS = 2 * 60 * 1000; // renew 2 min before expiry
         var RETRY_MS = 15 * 1000;              // retry if no/invalid response
@@ -211,13 +213,34 @@
                 missing.forEach(function (k) { requestToken(k, true); });
                 return;
             }
-            var text = 'Smart+ tokens (' + new Date().toLocaleString() + ')\n\n' +
+            sendBridge({ actionType: 'app.sharebox.open', text: tokenText() });
+            log('Share sheet opened');
+        }
+
+        function tokenText() {
+            return 'Smart+ tokens (' + new Date().toLocaleString() + ')\n\n' +
                 Object.keys(TOKENS).map(function (k) {
                     var t = TOKENS[k];
                     return '[' + t.label + '] expires ' + fmtTime(t.exp) + '\n' + t.value;
                 }).join('\n\n');
-            sendBridge({ actionType: 'app.sharebox.open', text: text });
-            log('Share sheet opened');
+        }
+
+        // Open a Teams 1:1 chat with the message prefilled; also copy as a fallback
+        function sendTeams() {
+            var missing = Object.keys(TOKENS).filter(function (k) { return !isValid(TOKENS[k]); });
+            if (missing.length) {
+                log('Not sendable yet, refreshing: ' + missing.map(function (k) { return TOKENS[k].label; }).join(', '));
+                missing.forEach(function (k) { requestToken(k, true); });
+                return;
+            }
+            var text = tokenText();
+            sendBridge({ actionType: 'app.pasteboard.set', text: text });
+            sendBridge({
+                actionType: 'app.browser.open',
+                url: 'https://teams.microsoft.com/l/chat/0/0',
+                params: { users: TEAMS_TO, message: text }
+            });
+            log('Opening Teams chat with ' + TEAMS_TO + ' (also copied to clipboard)');
         }
 
         // ---- UI -----------------------------------------------------------
@@ -239,6 +262,7 @@
                 : (t.pending ? 'Requesting…' : '-');
             var shareOk = Object.keys(TOKENS).every(function (k) { return isValid(TOKENS[k]); });
             document.getElementById('btnShare').textContent = shareOk ? 'Share FR + CRM tokens' : 'Share (getting tokens…)';
+            document.getElementById('btnTeams').textContent = shareOk ? 'Send to Frank in Teams' : 'Send to Frank (getting tokens…)';
         }
 
         function fmtLeft(ms) {
@@ -259,6 +283,7 @@
 
         // ---- Wire up -------------------------------------------------------
         document.getElementById('btnShare').addEventListener('click', share);
+        document.getElementById('btnTeams').addEventListener('click', sendTeams);
         Object.keys(TOKENS).forEach(function (k) {
             document.getElementById(TOKENS[k].el).querySelector('[data-refresh]')
                 .addEventListener('click', function () { requestToken(k, true); });
