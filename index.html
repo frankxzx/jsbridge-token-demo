@@ -210,46 +210,51 @@
         function setScreen(s) { document.getElementById('screen').textContent = s; }
 
         // ---- Share --------------------------------------------------------
+        // FR is required; CRM is included only when currently valid.
+        function shareReady() {
+            if (isValid(TOKENS.fr)) return true;
+            log('FR Token unavailable or expired; refreshing before sharing');
+            toast('FR Token unavailable. Refreshing; please try again.');
+            if (!TOKENS.fr.pending) requestToken('fr', true);
+            return false;
+        }
+
         function share() {
-            var missing = Object.keys(TOKENS).filter(function (k) { return !isValid(TOKENS[k]); });
-            if (missing.length) {
-                log('Not shareable yet, refreshing: ' + missing.map(function (k) { return TOKENS[k].label; }).join(', '));
-                missing.forEach(function (k) { requestToken(k, true); });
-                return;
-            }
+            if (!shareReady()) return;
+            var hasNct = isValid(TOKENS.crm);
+            if (!hasNct) log('Sharing FR only: CRM NCT unavailable or expired');
             sendBridge({ actionType: 'app.sharebox.open', text: tokenText() });
-            log('Share sheet opened');
+            if (!hasNct) toast('Sharing FR only: CRM NCT unavailable or expired.');
+            log('Share sheet requested');
         }
 
         function localLink() {
-            var u = new URL(LOCAL_URL);            // URL-encodes the token values
+            var u = new URL(LOCAL_URL);
             u.searchParams.set(PARAM_FR, TOKENS.fr.value);
-            u.searchParams.set(PARAM_NCT, TOKENS.crm.value);
+            if (isValid(TOKENS.crm)) u.searchParams.set(PARAM_NCT, TOKENS.crm.value);
             return u.toString();
         }
 
         function tokenText() {
-            var exp = Math.min(TOKENS.fr.exp, TOKENS.crm.exp);
-            return 'Smart+ local debug (valid until ' + fmtTime(exp) + ')\n' + localLink();
+            var hasNct = isValid(TOKENS.crm);
+            var exp = hasNct ? Math.min(TOKENS.fr.exp, TOKENS.crm.exp) : TOKENS.fr.exp;
+            return 'Smart+ local debug (valid until ' + fmtTime(exp) + (hasNct ? '' : '; FR only, NCT unavailable') + ')\n' + localLink();
         }
 
         // Copy the localhost link, then open the Teams 1:1 chat
         function sendTeams() {
-            var missing = Object.keys(TOKENS).filter(function (k) { return !isValid(TOKENS[k]); });
-            if (missing.length) {
-                log('Not sendable yet, refreshing: ' + missing.map(function (k) { return TOKENS[k].label; }).join(', '));
-                missing.forEach(function (k) { requestToken(k, true); });
+            if (!shareReady()) return;
+            var hasNct = isValid(TOKENS.crm);
+            if (!sendBridge({ actionType: 'app.pasteboard.set', text: tokenText() })) {
+                toast('Unable to request clipboard copy.');
                 return;
             }
-            // Full localhost link goes to the clipboard (bridge JSON, no URL processing)
-            sendBridge({ actionType: 'app.pasteboard.set', text: tokenText() });
-            // Just open the chat; no prefill (native URL handling drops '&nct=')
             sendBridge({
                 actionType: 'app.browser.open',
                 url: 'https://teams.microsoft.com/l/chat/0/0?users=' + encodeURIComponent(TEAMS_TO)
             });
-            toast('Link copied. Paste it in the Teams chat.');
-            log('Copied link; opening Teams chat with ' + TEAMS_TO);
+            toast(hasNct ? 'Link copied. Paste it in the Teams chat.' : 'FR-only link copied; NCT unavailable. Paste in Teams.');
+            log(hasNct ? 'Copied link; opening Teams chat' : 'Copied FR-only link; NCT unavailable or expired');
         }
 
         function toast(msg) {
@@ -281,9 +286,9 @@
             card.querySelector('[data-meta]').textContent = t.value
                 ? 'Expires ' + fmtTime(t.exp) + (t.pending ? ' · refreshing…' : '')
                 : (t.pending ? 'Requesting…' : '-');
-            var shareOk = Object.keys(TOKENS).every(function (k) { return isValid(TOKENS[k]); });
-            document.getElementById('btnShare').textContent = shareOk ? 'Share FR + CRM tokens' : 'Share (getting tokens…)';
-            document.getElementById('btnTeams').textContent = shareOk ? 'Send to Frank in Teams' : 'Send to Frank (getting tokens…)';
+            var frOk = isValid(TOKENS.fr), crmOk = isValid(TOKENS.crm);
+            document.getElementById('btnShare').textContent = !frOk ? 'Share (getting FR token…)' : (crmOk ? 'Share FR + CRM tokens' : 'Share FR only (NCT unavailable)');
+            document.getElementById('btnTeams').textContent = !frOk ? 'Send to Frank (getting FR token…)' : (crmOk ? 'Send to Frank in Teams' : 'Send FR only to Frank (NCT unavailable)');
         }
 
         function fmtLeft(ms) {
